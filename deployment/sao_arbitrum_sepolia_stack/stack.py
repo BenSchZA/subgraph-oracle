@@ -195,7 +195,7 @@ scrape_configs:
         # Add volume and mount point for Prometheus configuration
         prometheus_task_definition.add_volume(
             name="prometheus-config",
-            host=ecs.Host(  # Use Host configuration instead
+            host=ecs.Host(
                 source_path=None  # Fargate does not support specific host paths
             )
         )
