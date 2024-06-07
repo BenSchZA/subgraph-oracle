@@ -1,4 +1,5 @@
-FROM rust:latest as build
+# `--platform=linux/amd64` is necessary for Mac/Arm builds
+FROM --platform=linux/amd64 rust:latest as build
 
 # Copy and build the project
 WORKDIR /availability-oracle/src
