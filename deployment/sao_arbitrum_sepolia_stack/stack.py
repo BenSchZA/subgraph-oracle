@@ -9,10 +9,13 @@ from aws_cdk import (
     aws_logs as logs,
     aws_iam as iam,
     aws_ec2 as ec2,
-    aws_ssm as ssm
+    aws_ssm as ssm,
+    aws_s3 as s3,
+    aws_s3_assets as s3_assets,
+    aws_elasticloadbalancingv2 as elbv2,
 )
 from constructs import Construct
-
+import os
 
 class SAOArbitrumSepoliaStack(Stack):
 
@@ -74,7 +77,7 @@ class SAOArbitrumSepoliaStack(Stack):
         )
 
         # Create the task definition
-        task_definition = ecs.FargateTaskDefinition(
+        sao_task_definition = ecs.FargateTaskDefinition(
             self,
             "TaskDef",
             memory_limit_mib=512,
@@ -82,7 +85,7 @@ class SAOArbitrumSepoliaStack(Stack):
             execution_role=execution_role,
         )
 
-        task_definition.add_container(
+        sao_container = sao_task_definition.add_container(
             "sao_arbitrum_sepolia",
             image=ecs.ContainerImage.from_ecr_repository(repository, tag="latest"),
             logging=ecs.LogDriver.aws_logs(log_group=log_group, stream_prefix="ecs"),
@@ -105,12 +108,12 @@ class SAOArbitrumSepoliaStack(Stack):
             }
         )
 
-        # Create the Fargate service
-        ecs.FargateService(
+        # Create the Fargate service for SAO
+        sao_service = ecs.FargateService(
             self,
             "FargateService",
             cluster=cluster,
-            task_definition=task_definition,
+            task_definition=sao_task_definition,
             desired_count=1,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             assign_public_ip=True,
@@ -134,8 +137,210 @@ class SAOArbitrumSepoliaStack(Stack):
         rule.add_target(
             targets.EcsTask(
                 cluster=cluster,
-                task_definition=task_definition,
+                task_definition=sao_task_definition,
                 task_count=1,
                 subnet_selection=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             )
         )
+
+        # Create S3 bucket to store Prometheus config
+        bucket = s3.Bucket(self, "PrometheusConfigBucket")
+
+        # Define the Prometheus configuration content with dynamic SAO service discovery
+        prometheus_config_content = f"""
+global:
+    scrape_interval: 15s
+
+scrape_configs:
+    - job_name: 'sao'
+    static_configs:
+        - targets: ['{sao_service.service_name}:8090']
+        """
+
+        # Save the Prometheus configuration content to a file
+        prometheus_config_path = os.path.join(os.getcwd(), "prometheus.yml")
+        with open(prometheus_config_path, "w") as f:
+            f.write(prometheus_config_content)
+
+        # Create an asset for the Prometheus configuration file
+        prometheus_config_asset = s3_assets.Asset(self, "PrometheusConfigAsset",
+            path=prometheus_config_path
+        )
+
+        # Create Task Definition for Prometheus
+        prometheus_task_definition = ecs.FargateTaskDefinition(
+            self,
+            "PrometheusTaskDef",
+            memory_limit_mib=1024,
+            cpu=512,
+        )
+
+        prometheus_container = prometheus_task_definition.add_container(
+            "prometheus",
+            image=ecs.ContainerImage.from_registry("prom/prometheus"),
+            logging=ecs.LogDriver.aws_logs(stream_prefix="Prometheus"),
+            environment={
+                'S3_BUCKET': bucket.bucket_name,
+                'S3_KEY': prometheus_config_asset.s3_object_key
+            },
+            command=[
+                '--config.file=/etc/prometheus/prometheus.yml'
+            ]
+        )
+
+        prometheus_container.add_port_mappings(
+            ecs.PortMapping(container_port=9090)
+        )
+
+        # Add volume and mount point for Prometheus configuration
+        prometheus_task_definition.add_volume(
+            name="prometheus-config",
+            host=ecs.Host(  # Use Host configuration instead
+                source_path=None  # Fargate does not support specific host paths
+            )
+        )
+
+        prometheus_container.add_mount_points(
+            ecs.MountPoint(
+                container_path="/etc/prometheus",
+                source_volume="prometheus-config",
+                read_only=False
+            )
+        )
+
+        # Add permissions to the task role to read from S3
+        prometheus_task_definition.task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[bucket.arn_for_objects(prometheus_config_asset.s3_object_key)]
+            )
+        )
+
+        # Add an init container to copy the configuration file from S3
+        prometheus_config_init_container = prometheus_task_definition.add_container(
+            "prometheus-config-init",
+            image=ecs.ContainerImage.from_registry("amazonlinux"),
+            command=[
+                'sh', '-c',
+                'yum install -y aws-cli && '
+                'aws s3 cp s3://$S3_BUCKET/$S3_KEY /etc/prometheus/prometheus.yml'
+            ],
+            essential=True,
+            environment={
+                'S3_BUCKET': bucket.bucket_name,
+                'S3_KEY': prometheus_config_asset.s3_object_key
+            },
+            memory_reservation_mib=128,
+            user="root",
+        )
+
+        prometheus_config_init_container.add_mount_points(
+            ecs.MountPoint(
+                container_path="/etc/prometheus",
+                source_volume="prometheus-config",
+                read_only=False
+            )
+        )
+
+        # Create Security Group for Prometheus
+        prometheus_security_group = ec2.SecurityGroup(
+            self,
+            "PrometheusSG",
+            vpc=vpc,
+            description="Allow traffic to Prometheus",
+            allow_all_outbound=True
+        )
+
+        prometheus_security_group.add_ingress_rule(
+            ec2.Peer.ipv4(vpc.vpc_cidr_block),
+            ec2.Port.tcp(9090),
+            "Allow internal Prometheus access"
+        )
+
+        # Create Fargate Service for Prometheus
+        prometheus_service = ecs.FargateService(
+            self,
+            "PrometheusService",
+            cluster=cluster,
+            task_definition=prometheus_task_definition,
+            desired_count=1,
+            assign_public_ip=False,
+            security_groups=[prometheus_security_group],
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
+        )
+
+        # Create Task Definition for Grafana
+        grafana_task_definition = ecs.FargateTaskDefinition(
+            self,
+            "GrafanaTaskDef",
+            memory_limit_mib=1024,
+            cpu=512,
+        )
+
+        grafana_container = grafana_task_definition.add_container(
+            "grafana",
+            image=ecs.ContainerImage.from_registry("grafana/grafana"),
+            logging=ecs.LogDriver.aws_logs(stream_prefix="Grafana"),
+            environment={
+                'GF_SECURITY_ADMIN_USER': 'admin',
+                'GF_SECURITY_ADMIN_PASSWORD': 'your_secure_password'
+            }
+        )
+
+        grafana_container.add_port_mappings(
+            ecs.PortMapping(container_port=3000)
+        )
+
+        # Create Security Group for Grafana
+        grafana_security_group = ec2.SecurityGroup(
+            self,
+            "GrafanaSG",
+            vpc=vpc,
+            description="Allow traffic to Grafana",
+            allow_all_outbound=True
+        )
+
+        grafana_security_group.add_ingress_rule(
+            ec2.Peer.any_ipv4(),
+            ec2.Port.tcp(3000),
+            "Allow public Grafana access"
+        )
+
+        # Create Fargate Service for Grafana
+        grafana_service = ecs.FargateService(
+            self,
+            "GrafanaService",
+            cluster=cluster,
+            task_definition=grafana_task_definition,
+            desired_count=1,
+            assign_public_ip=True,
+            security_groups=[grafana_security_group],
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+        )
+
+        # Create an Application Load Balancer for Grafana
+        lb = elbv2.ApplicationLoadBalancer(
+            self, "GrafanaLB",
+            vpc=vpc,
+            internet_facing=True,
+            security_group=grafana_security_group
+        )
+
+        listener = lb.add_listener("GrafanaListener", port=80)
+        listener.add_targets("GrafanaTarget", 
+            port=3000, 
+            targets=[grafana_service],
+            protocol=elbv2.ApplicationProtocol.HTTP,  # Specify the protocol here
+            health_check=elbv2.HealthCheck(
+                path="/api/health",  # Specify the health check path
+                interval=Duration.seconds(30),
+                timeout=Duration.seconds(5),
+                healthy_http_codes="200"
+            )
+        )
+
+        # Outputs
+        self.output = {
+            'PrometheusLocalAccess': f"http://{prometheus_service.service_name}:9090",
+            'GrafanaURL': f"http://{lb.load_balancer_dns_name}"
+        }
