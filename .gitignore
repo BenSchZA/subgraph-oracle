@@ -21,3 +21,8 @@ target/
 # Ignore node stuff
 node_modules/
 yarn-error.log
+
+# Custom
+.env
+deployment/certificates/*.pem
+deployment/certificates/*.json
