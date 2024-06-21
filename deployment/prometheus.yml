@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'local'
+    static_configs:
+      - targets: ['subgraph_oracle:8090']
+    metrics_path: /
+
