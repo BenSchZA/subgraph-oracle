@@ -1,0 +1,1 @@
+npx hardhat data:post --edge $DATA_EDGE_CONTRACT --network arbitrum-one --data $DATA_EDGE_CALLDATA
