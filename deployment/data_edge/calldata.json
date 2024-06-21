@@ -1,0 +1,15 @@
+{
+	"version": "v0.0.1",
+	"config": {
+		"ipfs_concurrency": "4",
+		"ipfs_timeout": "10000",
+		"min_signal": "100",
+		"period": "300",
+		"grace_period": "0",
+		"supported_data_source_kinds": "ethereum,ethereum/contract,file/ipfs,substreams,file/arweave",
+		"network_subgraph_deloyment_id": "QmSWxvd8SaQK6qZKJ7xtfxCCGoRzGnoi2WNzmJYYJW9BXY",
+		"epoch_block_oracle_subgraph_deloyment_id": "QmQEGDTb3xeykCXLdWx7pPX3qeeGMUvHmGWP4SpMkv5QJf",
+		"subgraph_availability_manager_contract": "0x1cB555359319A94280aCf85372Ac2323AaE2f5fd",
+		"oracle_index": "2"
+	}
+}

@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  subgraph_oracle:
+    image: graphprotocol/subgraph-availability-oracle
+    container_name: subgraph_oracle
+    ports:
+      - "8090:8090"
+    command: >
+      --dry-run
+      --ipfs https://api.thegraph.com/ipfs 
+      --subgraph https://api.thegraph.com/subgraphs/name/graphprotocol/graph-network-arbitrum-sepolia 
+      --epoch-block-oracle-subgraph https://api.thegraph.com/subgraphs/name/graphprotocol/arbitrum-sepolia-ebo 
+      --ipfs-concurrency 4 
+      --ipfs-timeout 10000 
+      --min-signal 100 
+      --subgraph-availability-manager-contract 0x71D9aE967d1f31fbbD1817150902de78f8f2f73E 
+      --url https://arb-sepolia.g.alchemy.com/v2/71hNcKNJvQh6M2PcD0OpyPPRbsWHJrvw 
+      --oracle-index 2
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+
+volumes:
+  prometheus_data: {}
+
