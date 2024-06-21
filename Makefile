@@ -17,9 +17,13 @@ push_docker_image:
 	docker push 891377045977.dkr.ecr.eu-north-1.amazonaws.com/graphprotocol/subgraph-availability-oracle:latest
 
 # AWS CloudFormation deployment
-deploy:
-	cd deployment/ && cdk deploy --profile infradao
+deploy_all:
+	cd deployment/ && cdk deploy --profile infradao --all
 
 # cdk bootstrap --profile infradao
 # cdk synth --profile infradao
 # cdk deploy --profile infradao
+
+# Create certificate
+create_certificate:
+	openssl req -x509 -newkey rsa:2048 -keyout deployment/certificates/key.pem -out deployment/certificates/cert.pem -days 365 -nodes
