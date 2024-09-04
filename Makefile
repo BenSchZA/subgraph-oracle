@@ -17,6 +17,15 @@ push_docker_image:
 	docker push 891377045977.dkr.ecr.eu-north-1.amazonaws.com/graphprotocol/subgraph-availability-oracle:latest
 
 # AWS CloudFormation deployment
+deploy_arbitrum_sepolia:
+	cd deployment/ && cdk deploy --profile infradao "arbitrum-sepolia"
+
+deploy_arbitrum_one:
+	cd deployment/ && cdk deploy --profile infradao "arbitrum-one"
+
+deploy_monitoring:
+	cd deployment/ && cdk deploy --profile infradao "monitoring"
+
 deploy_all:
 	cd deployment/ && cdk deploy --profile infradao --all
 
