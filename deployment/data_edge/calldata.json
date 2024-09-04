@@ -1,5 +1,5 @@
 {
-	"version": "v0.0.1",
+	"version": "v1.1.0",
 	"config": {
 		"ipfs_concurrency": "4",
 		"ipfs_timeout": "10000",
