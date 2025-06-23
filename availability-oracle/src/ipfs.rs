@@ -3,12 +3,14 @@ use bytes::Bytes;
 use common::prelude::*;
 use common::prometheus;
 use moka::future::Cache;
+use reqwest::Client;
 use std::time::Duration;
 use tiny_cid::Cid;
 
 pub enum IpfsError {
     GatewayTimeout(Cid, Error), // Gateway/Cloudflare timed-out
     ClientTimeout(Cid, Error),  // Client timed-out when requesting the file
+    NotFound(Cid, Error),       // Manifest not found
     Other(Error),
 }
 
@@ -25,7 +27,7 @@ pub trait Ipfs {
 pub struct IpfsImpl {
     endpoint: String,
     semaphore: tokio::sync::Semaphore,
-    client: reqwest::Client,
+    client: Client,
 
     // Cache for CIDs; we invalidate this cache between runs to ensure we're checking
     // IPFS regularly
@@ -38,7 +40,7 @@ pub struct IpfsImpl {
 impl IpfsImpl {
     pub fn new(endpoint: String, max_concurrent: usize, timeout: Duration) -> Self {
         IpfsImpl {
-            client: reqwest::Client::new(),
+            client: Client::new(),
             endpoint,
             semaphore: tokio::sync::Semaphore::new(max_concurrent),
             cache: Cache::new(10000),
@@ -68,6 +70,7 @@ impl IpfsImpl {
                     IpfsError::GatewayTimeout(arg, e.into())
                 }
                 _ if e.is_timeout() => IpfsError::ClientTimeout(arg, e.into()),
+                Some(NOT_FOUND) => IpfsError::NotFound(arg, e.into()),
                 _ => IpfsError::Other(e.into()),
             })
     }
@@ -75,6 +78,7 @@ impl IpfsImpl {
 
 const CLOUDFLARE_TIMEOUT: u16 = 524;
 const GATEWAY_TIMEOUT: u16 = 504;
+const NOT_FOUND: u16 = 404;
 
 #[async_trait]
 impl Ipfs for IpfsImpl {
